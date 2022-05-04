@@ -1,0 +1,756 @@
+zabbix_export:
+  version: '5.4'
+  date: '2022-05-04T08:23:28Z'
+  groups:
+    -
+      uuid: dc1a6ad811e145ff99c2c1b0ad350c8d
+      name: 'Zoom Template'
+  templates:
+    -
+      uuid: de4d2055bf12485695f411dd724cc559
+      template: 'Template HTTP Zoom Monitoring'
+      name: 'Template HTTP Zoom Monitoring'
+      groups:
+        -
+          name: 'Zoom Template'
+      items:
+        -
+          uuid: 2340057052f64559a80f54b9ffee9b5f
+          name: 'Average Audio Input Jitter'
+          type: CALCULATED
+          key: audio.input.jitter.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/audio.input.jitter[*,*]))'
+        -
+          uuid: 0d404effc98940ec9938d1f2f18ae15e
+          name: 'Average Audio Input Latency'
+          type: CALCULATED
+          key: audio.input.latency.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/audio.input.latency[*,*]))'
+        -
+          uuid: 17ea73220c1d4aaeaba8ce526b76900c
+          name: 'Average Audio Input Loss'
+          type: CALCULATED
+          key: audio.input.loss.average
+          delay: 100s
+          value_type: FLOAT
+          units: '%'
+          params: 'avg(last_foreach(/Zoom/audio.input.loss[*,*]))'
+        -
+          uuid: c87c2645f0624966b498e14a940538d0
+          name: 'Average SLO Audio Input'
+          type: CALCULATED
+          key: audio.input.slo.average
+          delay: 100s
+          value_type: FLOAT
+          params: 'avg(avg_foreach(/Zoom/audio.slo.input[*],2m))'
+        -
+          uuid: b7c1d312143d4c8aab4c58a2ad2f0308
+          name: 'Average Audio Output Jitter'
+          type: CALCULATED
+          key: audio.output.jitter.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/audio.output.jitter[*,*]))'
+        -
+          uuid: 9e4faf0f8c5c43fea074dc819300f54f
+          name: 'Average Audio Output Latency'
+          type: CALCULATED
+          key: audio.output.latency.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/audio.output.latency[*,*]))'
+        -
+          uuid: b6238a48edc34ee0b88e9a6ce107af60
+          name: 'Average Audio Output Loss'
+          type: CALCULATED
+          key: audio.output.loss.average
+          delay: 100s
+          value_type: FLOAT
+          units: '%'
+          params: 'avg(last_foreach(/Zoom/audio.output.loss[*,*]))'
+        -
+          uuid: e82f46a4e9bd4005b11cf608b4dd436d
+          name: 'Average SLO Audio Output'
+          type: CALCULATED
+          key: audio.output.slo.average
+          delay: 100s
+          value_type: FLOAT
+          params: 'avg(avg_foreach(/Zoom/audio.slo.output[*], 2m))'
+        -
+          uuid: 897008f3ebc843428fee464ed123e9ef
+          name: 'Get Data'
+          type: SCRIPT
+          key: get_data
+          delay: 90s
+          trends: '0'
+          value_type: TEXT
+          params: |
+            var params = JSON.parse(value);
+            
+            var request = new HttpRequest();
+            
+            request.addHeader('Content-Type: application/json');
+            request.addHeader('Authorization: Bearer ' + params.token);
+            
+            var response,
+                output,
+                error_msg = '',
+                participants = [],
+                user_data = [],
+                user_detailed = [];
+            
+            function getHttpData(url, body) {
+                response = request.get(url, body);
+                Zabbix.log(4, '[ Zoom API ] [ ' + url + ' ] Received response with status code ' + request.getStatus() + ': ' + response);
+            
+                if (response !== null) {
+                    try {
+                        response = JSON.parse(response);
+                    }
+                    catch (error) {
+                        throw 'Failed to parse response received from Zoom API. Check debug log for more information.';
+                    }
+                }
+            
+                if (request.getStatus() !== 200) {
+                    if (response.error && response.error.message) {
+                        throw response.error.message;
+                    } else {
+                        throw 'Failed to receive data: invalid response status code.';
+                    }
+                }
+            
+                if (typeof (response) !== 'object' || response === null) {
+                    throw 'Cannot process response data: received data is not an object.';
+                }
+            
+                return response;
+            };
+            
+            try {
+            
+                if (params.token === '{' + '$ZOOM.TOKEN}') {
+                    throw 'Please change {' + '$ZOOM.TOKEN} macro with the proper value.';
+                }
+            
+                if (params.url.indexOf('http://') === -1 && params.url.indexOf('https://') === -1) {
+                    params.url = 'https://' + params.url;
+                }
+            
+                if (!params.url.endsWith('/')) {
+                    params.url += '/';
+                }
+            
+                meetings = getHttpData(params.url + 'metrics/meetings', '{}');
+            
+                for (var i in meetings.meetings) 
+                    {
+                        responseParticipants = getHttpData(params.url + '/metrics/meetings/'+ meetings.meetings[i].id +'/participants', {});
+                        for (var j in responseParticipants.participants)
+                            { ip = "" + responseParticipants.participants[j].ip_address;
+                                if (ip.match(/.*/))
+                                    {
+                                        data =
+                                        {
+                                        'meetid': meetings.meetings[i].id,
+                                        'userid': responseParticipants.participants[j].user_id,
+                                        'user_name': responseParticipants.participants[j].user_name,
+                                        'ip': responseParticipants.participants[j].ip_address
+                                        }
+                                user_data = user_data.concat(data);
+                                    }
+                            }
+                    }
+                    for (var l in user_data) 
+                        {
+                            responseQos = getHttpData(params.url + '/metrics/meetings/'+ user_data[l].meetid +'/participants/'+ user_data[l].userid +'/qos', {});
+                            temp = [];
+                        for (var aa in responseQos.user_qos) 
+                            {
+                                if (responseQos.user_qos[aa].audio_output.avg_loss !== '' && responseQos.user_qos[aa].audio_input.avg_loss !== '')
+                                {
+                                        temp = 
+                                        {
+                                            'user': user_data[l].user_name,
+                                            'userid': user_data[l].userid,
+                                            'meetid': user_data[l].meetid,
+                                            'ip': user_data[l].ip,
+                                            'audio_output_avg_loss': responseQos.user_qos[aa].audio_output.avg_loss,
+                                            'audio_input_avg_loss': responseQos.user_qos[aa].audio_input.avg_loss,
+                                            'video_input_avg_loss': responseQos.user_qos[aa].video_input.avg_loss,
+                                            'video_output_avg_loss': responseQos.user_qos[aa].video_output.avg_loss,  
+                                            'audio_output_bitrate': responseQos.user_qos[aa].audio_output.bitrate,
+                                            'audio_input_bitrate': responseQos.user_qos[aa].audio_input.bitrate,
+                                            'video_input_bitrate': responseQos.user_qos[aa].video_input.bitrate,
+                                            'video_output_bitrate': responseQos.user_qos[aa].video_output.bitrate,
+                                            'audio_output_latency': responseQos.user_qos[aa].audio_output.latency,
+                                            'audio_input_latency': responseQos.user_qos[aa].audio_input.latency,
+                                            'video_input_latency': responseQos.user_qos[aa].video_input.latency,
+                                            'video_output_latency': responseQos.user_qos[aa].video_output.latency,
+                                            'audio_output_jitter': responseQos.user_qos[aa].audio_output.jitter,
+                                            'audio_input_jitter': responseQos.user_qos[aa].audio_input.jitter,
+                                            'video_input_jitter': responseQos.user_qos[aa].video_input.jitter,
+                                            'video_output_jitter': responseQos.user_qos[aa].video_output.jitter
+                                        }
+                                }
+                            
+                            }
+                            user_detailed = user_detailed.concat(temp);
+                        }
+                        
+            
+            
+            } catch (error) {
+                error_msg = error;
+            };
+            
+            return JSON.stringify({
+                'participants': user_detailed,
+                'error': error_msg.toString()
+            });
+          timeout: 60s
+          parameters:
+            -
+              name: token
+              value: '{$ZOOM.TOKEN}'
+            -
+              name: url
+              value: '{$ZOOM.URL}'
+        -
+          uuid: 78626aecca9f4dcb817159c9464edf4c
+          name: 'Average Video Input Jitter'
+          type: CALCULATED
+          key: video.input.jitter.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/video.input.jitter[*,*]))'
+        -
+          uuid: da856c7fe782410bb115f96c4a3d4d93
+          name: 'Average Video Input Latency'
+          type: CALCULATED
+          key: video.input.latency.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/video.input.latency[*,*]))'
+        -
+          uuid: 241d9fc7a10e47bda334f47eb2367615
+          name: 'Average Video Input Loss'
+          type: CALCULATED
+          key: video.input.loss.average
+          delay: 100s
+          value_type: FLOAT
+          units: '%'
+          params: 'avg(last_foreach(/Zoom/video.input.loss[*,*]))'
+        -
+          uuid: bf94168bbb3c4502840aad03db7f90c6
+          name: 'Average SLO Video Input'
+          type: CALCULATED
+          key: video.input.slo.average
+          delay: 100s
+          value_type: FLOAT
+          params: 'avg(avg_foreach(/Zoom/video.slo.input[*], 2m))'
+        -
+          uuid: ff68342416724f72bf193d5a70b11cf2
+          name: 'Average Video Output Jitter'
+          type: CALCULATED
+          key: video.output.jitter.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/video.output.jitter[*,*]))'
+        -
+          uuid: f4f32e89939247d88663bc72121640a3
+          name: 'Average Video Output Latency'
+          type: CALCULATED
+          key: video.output.latency.average
+          delay: 100s
+          value_type: FLOAT
+          units: ms
+          params: 'avg(last_foreach(/Zoom/video.output.latency[*,*]))'
+        -
+          uuid: 46ed1086038143daa7a3caf523f1a4ab
+          name: 'Average Video Output Loss'
+          type: CALCULATED
+          key: video.output.loss.average
+          delay: 100s
+          value_type: FLOAT
+          units: '%'
+          params: 'avg(last_foreach(/Zoom/video.output.loss[*,*]))'
+        -
+          uuid: 6cd0f5e8ef3d41cc8ae6450eac931280
+          name: 'Average SLO Video Output'
+          type: CALCULATED
+          key: video.output.slo.average
+          delay: 100s
+          value_type: FLOAT
+          params: 'avg(avg_foreach(/Zoom/video.slo.output[*],2m))'
+      discovery_rules:
+        -
+          uuid: f66e85dcd50340a8aa40d327839cd0c7
+          name: 'User Discovery'
+          type: DEPENDENT
+          key: user.discovery
+          delay: '0'
+          lifetime: '3600'
+          item_prototypes:
+            -
+              uuid: 45a7747b7fb44d50a9a9c5d9f0333528
+              name: '{#USERNAME} - Audio Input (Bitrate)'
+              type: DEPENDENT
+              key: 'audio.input.bitrate[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: kbps
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_input_bitrate'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 590acc4e91cd4c1a8a6dd42f09d9d853
+              name: '{#USERNAME} - Audio Input (Jitter)'
+              type: DEPENDENT
+              key: 'audio.input.jitter[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_input_jitter'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 7a2cfca6d2254f1397cdadd0bd87040c
+              name: '{#USERNAME} - Audio Input (Latency)'
+              type: DEPENDENT
+              key: 'audio.input.latency[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_input_latency'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: fc8e8e0ee3c14f8ea5587be3e82b688f
+              name: '{#USERNAME} - Audio Input (Packet Loss)'
+              type: DEPENDENT
+              key: 'audio.input.loss[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_input_avg_loss'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d.\d
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: c530c1c54400455dbc92fb2827a4c599
+              name: '{#USERNAME} - Audio Output (Bitrate)'
+              type: DEPENDENT
+              key: 'audio.output.bitrate[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: kbps
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_output_bitrate'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: cddf0a2fdf72430d8130f355f92c0765
+              name: '{#USERNAME} - Audio Output (Jitter)'
+              type: DEPENDENT
+              key: 'audio.output.jitter[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_output_jitter'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: b52b99c7879e4768a6587327468db8b1
+              name: '{#USERNAME} - Audio Output (Latency)'
+              type: DEPENDENT
+              key: 'audio.output.latency[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_output_latency'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: be982d46e6534ca495ee42e6841bc3bf
+              name: '{#USERNAME} - Audio Output (Packet Loss)'
+              type: DEPENDENT
+              key: 'audio.output.loss[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].audio_output_avg_loss'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d.\d
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 55f2f087de214570a4b55428525a15ab
+              name: '{#USERNAME} - Video Input (Bitrate)'
+              type: DEPENDENT
+              key: 'video.input.bitrate[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: kbps
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_input_bitrate'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 808d71a386954e498904dbf079d7cb87
+              name: '{#USERNAME} - Video Input (Jitter)'
+              type: DEPENDENT
+              key: 'video.input.jitter[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_input_jitter'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 5202718da4884515a84f5d0e83a38ff0
+              name: '{#USERNAME} - Video Input (Latency)'
+              type: DEPENDENT
+              key: 'video.input.latency[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_input_latency'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: a9c139fa4b3441829851223e31c173c7
+              name: '{#USERNAME} - Video Input (Packet Loss)'
+              type: DEPENDENT
+              key: 'video.input.loss[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_input_avg_loss'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d.\d
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 17f697fd20a14cf1a3504f51c99befbe
+              name: '{#USERNAME} - Video Output (Bitrate)'
+              type: DEPENDENT
+              key: 'video.output.bitrate[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: kbps
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_output_bitrate'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 3024407e5bbb4b9d9f324880dcc8fae5
+              name: '{#USERNAME} - Video Output (Jitter)'
+              type: DEPENDENT
+              key: 'video.output.jitter[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_output_jitter'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 69fdb4a4924e4e8aaf62d135598e0238
+              name: '{#USERNAME} - Video Output (Latency)'
+              type: DEPENDENT
+              key: 'video.output.latency[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: ms
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_output_latency'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d+
+                    - \0
+              master_item:
+                key: get_data
+            -
+              uuid: 5500ad331a074492899a36cb7a91021d
+              name: '{#USERNAME} - Video Output (Packet Loss)'
+              type: DEPENDENT
+              key: 'video.output.loss[{#USERID}, {#MEETID}]'
+              delay: '0'
+              value_type: FLOAT
+              units: '%'
+              preprocessing:
+                -
+                  type: JSONPATH
+                  parameters:
+                    - '$.participants[?(@.userid == ''{#USERID}'' && @.meetid== ''{#MEETID}'' )].video_output_avg_loss'
+                -
+                  type: REGEX
+                  parameters:
+                    - \d.\d
+                    - \0
+              master_item:
+                key: get_data
+          master_item:
+            key: get_data
+          lld_macro_paths:
+            -
+              lld_macro: '{#MEETID}'
+              path: $.meetid
+            -
+              lld_macro: '{#USERID}'
+              path: $.userid
+            -
+              lld_macro: '{#USERNAME}'
+              path: $.user
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.participants
+        -
+          uuid: 516ea5a1574c4f95b09d647727d4934a
+          name: 'User Discovery (SLO Archive)'
+          type: DEPENDENT
+          key: user.discovery.slo
+          delay: '0'
+          item_prototypes:
+            -
+              uuid: 2b6cd4f1ab024540ba31c2a838f9d181
+              name: '{#USERNAME} - SLO Audio Input'
+              type: CALCULATED
+              key: 'audio.slo.input[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//audio.input.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//audio.input.loss[{#USERID}, {#MEETID}],5m)+
+                count(//audio.input.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.input.latency[{#USERID}, {#MEETID}],5m)+
+                count(//audio.input.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.input.jitter[{#USERID}, {#MEETID}],5m)
+                )/3*100
+            -
+              uuid: a313ffb1a7aa4b2ea0b5aaf5a02ed209
+              name: '{#USERNAME} - SLO Audio Output'
+              type: CALCULATED
+              key: 'audio.slo.output[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//audio.output.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//audio.output.loss[{#USERID}, {#MEETID}],5m)+
+                count(//audio.output.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.output.latency[{#USERID}, {#MEETID}],5m)+
+                count(//audio.output.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.output.jitter[{#USERID}, {#MEETID}],5m)
+                )/3*100
+            -
+              uuid: 25c36bba71c242dfb69918ffd0b822ef
+              name: '{#USERNAME} - SLO Audio'
+              type: CALCULATED
+              key: 'audio.slo[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//audio.input.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//audio.input.loss[{#USERID}, {#MEETID}],5m)+
+                count(//audio.output.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//audio.output.loss[{#USERID}, {#MEETID}],5m)+
+                count(//audio.input.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.input.latency[{#USERID}, {#MEETID}],5m)+
+                count(//audio.output.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.output.latency[{#USERID}, {#MEETID}],5m)+
+                count(//audio.input.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.input.jitter[{#USERID}, {#MEETID}],5m)+
+                count(//audio.output.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//audio.output.jitter[{#USERID}, {#MEETID}],5m)
+                )/6*100
+            -
+              uuid: eec4ac645bae477dabf869c40a3bc4ed
+              name: '{#USERNAME} - SLO Video Input'
+              type: CALCULATED
+              key: 'video.slo.input[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//video.input.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//video.input.loss[{#USERID}, {#MEETID}],5m)+
+                count(//video.input.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.input.latency[{#USERID}, {#MEETID}],5m)+
+                count(//video.input.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.input.jitter[{#USERID}, {#MEETID}],5m)
+                )/3*100
+            -
+              uuid: 80ef87aa9ded4ef78de4fa308c169c9d
+              name: '{#USERNAME} - SLO Video Output'
+              type: CALCULATED
+              key: 'video.slo.output[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//video.output.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//video.output.loss[{#USERID}, {#MEETID}],5m)+
+                count(//video.output.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.output.latency[{#USERID}, {#MEETID}],5m)+
+                count(//video.output.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.output.jitter[{#USERID}, {#MEETID}],5m)
+                )/3*100
+            -
+              uuid: ebf97767160d4065a160065bcfcea1da
+              name: '{#USERNAME} - SLO Video'
+              type: CALCULATED
+              key: 'video.slo[{#USERNAME}]'
+              delay: 2m
+              value_type: FLOAT
+              params: |
+                (
+                count(//video.input.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//video.input.loss[{#USERID}, {#MEETID}],5m)+
+                count(//video.output.loss[{#USERID}, {#MEETID}],5m,"lt","10")/count(//video.output.loss[{#USERID}, {#MEETID}],5m)+
+                count(//video.input.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.input.latency[{#USERID}, {#MEETID}],5m)+
+                count(//video.output.latency[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.output.latency[{#USERID}, {#MEETID}],5m)+
+                count(//video.input.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.input.jitter[{#USERID}, {#MEETID}],5m)+
+                count(//video.output.jitter[{#USERID}, {#MEETID}],5m,"lt","100")/count(//video.output.jitter[{#USERID}, {#MEETID}],5m)
+                )/6*100
+          master_item:
+            key: get_data
+          lld_macro_paths:
+            -
+              lld_macro: '{#MEETID}'
+              path: $.meetid
+            -
+              lld_macro: '{#USERID}'
+              path: $.userid
+            -
+              lld_macro: '{#USERNAME}'
+              path: $.user
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.participants
+      macros:
+        -
+          macro: '{$ZOOM.TOKEN}'
+        -
+          macro: '{$ZOOM.URL}'
+          value: api.zoom.us/v2
